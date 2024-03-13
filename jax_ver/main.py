@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 
 from jax_buffer import JaxFbxBuffer
+from src.env import get_space_dim
 from model import MAVAE
 from jaxmarl import make
 from trainer import create_dataset, train_step, test_step
@@ -20,15 +21,14 @@ import time
 from datetime import datetime
 import gymnax
 
-def get_space_size(space_item):
-    if isinstance(space_item, gymnax.environments.spaces.Discrete):
-        space_shape = space_item.n
-        return space_shape
-    elif isinstance(space_item, gymnax.environments.spaces.Box):
-        return space_item.shape[0]
-    else:
-        raise NotImplementedError
-
+# def get_space_size(space_item):
+#     if isinstance(space_item, gymnax.environments.spaces.Discrete):
+#         space_shape = space_item.n
+#         return space_shape
+#     elif isinstance(space_item, gymnax.environments.spaces.Box):
+#         return space_item.shape[0]
+#     else:
+#         raise NotImplementedError
 
 
 
@@ -104,7 +104,7 @@ if __name__ == "__main__":
         # print(f"debug only: @main: {env.observation_space(agent_id)}")
         # obs_dim_all[agent_id] = get_space_size(env.observation_space(agent_id))
         obs_dim_all[agent_id] = next_obs[agent_id].shape[0]
-        act_dim_all[agent_id] = get_space_size(env.action_space(agent_id))
+        act_dim_all[agent_id] = get_space_dim(env.action_space(agent_id))
     # for agent_id in agents_id:
     #     print(f"debug only: @main: {agent_id} with shape {obs_dim_all[agent_id]}")
 
