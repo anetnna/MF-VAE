@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from jax_buffer import JaxFbxBuffer
+from src.jax_buffer import JaxFbxBuffer
 from src.env import get_space_dim
 from model import MAVAE
 from jaxmarl import make
