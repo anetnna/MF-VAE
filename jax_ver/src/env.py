@@ -1,6 +1,7 @@
 import numpy as np
 from pettingzoo.mpe import simple_tag_v3
 import gymnasium
+from jaxmarl.environments.multi_agent_env import MultiAgentEnv, State
 
 
 def get_space_size(space_item):
@@ -55,3 +56,9 @@ def create_transition(obs, action, next_obs, done, rew):
     next_obs_all = np.array(next_obs_all)
 
     return obs_all, action_all, next_obs_all, done_all, rew
+
+
+class EnvRolloutManager:
+    def __init__(self):
+        pass
+
