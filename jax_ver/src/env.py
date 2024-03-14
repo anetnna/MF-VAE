@@ -6,8 +6,19 @@ from jaxmarl.environments.multi_agent_env import MultiAgentEnv, State
 from gymnax.environments.spaces import Box as BoxGymnax, Discrete as DiscreteGymnax
 from jaxmarl.environments.spaces import Box, Discrete, MultiDiscrete
 
-from typing import Optional, List, Tuple, Union
+from typing import List, NamedTuple
 from functools import partial
+
+from jax_buffer import JaxFbxBuffer
+
+
+class Transition(NamedTuple):
+    obs: dict
+    next_obs: dict
+    actions: dict
+    rewards: dict
+    dones: dict
+    infos: dict
 
 
 def get_space_dim(space):
@@ -99,6 +110,9 @@ class EnvRolloutManager(JaxMARLWrapper):
     def batch_sample(self, key, agent):
         return self.batch_samplers[agent](jax.random.split(key, self.batch_size)).astype(int)
 
+    def get_action_space_dim(self):
+        return {agent_id: get_space_dim(env.action_space(agent_id)) for agent_id in self.agents}
+
 
 
 if __name__ == "__main__":
@@ -108,7 +122,7 @@ if __name__ == "__main__":
                 num_good_agents=10,
                 num_adversaries=30,
                 num_obs=20,)
-    wrapped_env = EnvRolloutManager(env, batch_size=10)
+    wrapped_env = EnvRolloutManager(env, batch_size=8)
 
     # reset parallel env
     obs, state = wrapped_env.batch_reset(key)
@@ -121,8 +135,33 @@ if __name__ == "__main__":
     
     # step forward in parallel env
     key_step = jax.random.PRNGKey(42)
-    obs, state, reward, done, infos = wrapped_env.batch_step(key_step, state, actions)
+    next_obs, state, reward, done, infos = wrapped_env.batch_step(key_step, state, actions)
     print(obs['adversary_0'].shape) # obs shape: (batch_size, obs_dim)
     print(reward['__all__'])
     print(done['__all__'])
+
+    # test interaction with buffer
+    buffer = JaxFbxBuffer(max_length=10_000, 
+                          min_length=64, 
+                          batch_size=256, 
+                          add_batch=True)
+    obs_unbatched = jax.tree_map(lambda x: x[0, :], obs)
+    reward_unbatched = jax.tree_map(lambda x: x[0, ], reward)
+    actions_unbatched = jax.tree_map(lambda x: x[0], actions)
+    next_obs_unbatched = jax.tree_map(lambda x: x[0, :], next_obs)
+    done_unbatched = jax.tree_map(lambda x: x[0], done)
+    buffer.init_buffer(obs_unbatched, reward_unbatched, actions_unbatched, next_obs_unbatched, done_unbatched)
+    # buffer.buffer.init(sample_transitions_unbatched)
+
+    for i in range(256 // 8):
+        obs = next_obs
+        actions = {agent: wrapped_env.batch_sample(key_act[i], agent) \
+            for i, agent in enumerate(env.agents)}
+        next_obs, state, reward, done, infos = wrapped_env.batch_step(key_step, state, actions)
+        buffer.add_trans(obs, reward, actions, next_obs, done, batch_input=True)
+    print(buffer.can_sample())
+
+    key_sample = jax.random.PRNGKey(42)
+    transitions = buffer.sample(key_sample)
+    print(transitions.experience['agent_0_obs'].shape)
 

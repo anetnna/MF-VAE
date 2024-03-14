@@ -9,7 +9,8 @@ def create_joint_transition(obs: Dict[str, Any],
                             reward: Dict[str, float], 
                             action: Dict[str, Any], 
                             next_obs: Dict[str, Any],
-                            done: Dict[str, bool]) -> Optional[Dict[str, Any]]:
+                            done: Dict[str, bool],
+                            batch_input: bool=False) -> Optional[Dict[str, Any]]:
     """
     Create a joint transition dictionary from individual observations, rewards, actions, done, and next observations of agents.
 
@@ -34,25 +35,43 @@ def create_joint_transition(obs: Dict[str, Any],
     joint_transition_map = {}
 
     # Iterate over each agent to construct their individual transition
-    ma_done = 0.0
+    ma_done = None
     for agent_id in agents:
         # Check if all required keys are present for the agent
         if agent_id not in reward or agent_id not in action or agent_id not in next_obs or agent_id not in done:
             print(f"agent id {agent_id} not exist in action/reward/next_obs/done dict")
             return None
-
+        if not batch_input:
         # Add each component of the transition to the joint transition map
-        joint_transition_map[f"{agent_id}_obs"] = obs[agent_id].reshape((-1, 1))
-        joint_transition_map[f"{agent_id}_act"] = action[agent_id].reshape((-1, 1))
-        joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id].reshape((-1, 1))
-        # print(f"debug only: reward shape {obs[agent_id].shape}")
-        joint_transition_map[f"{agent_id}_rew"] = reward[agent_id].reshape((-1, 1))
-        # joint_transition_map[f"{agent_id}_done"] = done[agent_id]
-        if done[agent_id]:
-            ma_done = 1.0
-    device_info = obs[agent_id].device()
-    joint_transition_map["done"] = jax.device_put(jnp.array(ma_done).reshape((-1, 1)), device_info)
-
+            joint_transition_map[f"{agent_id}_obs"] = obs[agent_id].reshape((-1, 1))
+            joint_transition_map[f"{agent_id}_act"] = action[agent_id].reshape((-1, 1))
+            # joint_transition_map[f"{agent_id}_act"] = action[agent_id]
+            joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id].reshape((-1, 1))
+            # print(f"debug only: reward shape {obs[agent_id].shape}")
+            joint_transition_map[f"{agent_id}_rew"] = reward[agent_id].reshape((-1, 1))
+            # joint_transition_map[f"{agent_id}_rew"] = reward[agent_id]
+            # joint_transition_map[f"{agent_id}_done"] = done[agent_id]
+            # print(f"debug only: act {action[agent_id].shape}")
+            # print(f"debug only: rew {reward[agent_id].shape}")
+            if done[agent_id]:
+                device_info = obs[agent_id].device()
+                ma_done = jax.device_put(jnp.array(True).reshape((-1, 1)), device_info).astype(jnp.float32)
+                # print(ma_done.dtype)
+        else:
+            # print(f"debug only: reward shape {reward[agent_id].shape}")
+            joint_transition_map[f"{agent_id}_obs"] = obs[agent_id][:, :, jnp.newaxis]
+            joint_transition_map[f"{agent_id}_act"] = action[agent_id][:, jnp.newaxis, jnp.newaxis]
+            joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id][:, :, jnp.newaxis]
+            joint_transition_map[f"{agent_id}_rew"] = reward[agent_id][:, jnp.newaxis, jnp.newaxis]
+            # joint_transition_map[f"{agent_id}_done"] = done[agent_id]
+            ma_done = done['__all__'][:, jnp.newaxis, jnp.newaxis].astype(jnp.float32)
+            # print(f"debug only: act {action[agent_id][:, jnp.newaxis, jnp.newaxis].shape}")
+            # print(f"debug only: rew {reward[agent_id][:, jnp.newaxis, jnp.newaxis].shape}")
+    if ma_done is None:
+        device_info = obs[agent_id].device()
+        ma_done = jax.device_put(jnp.array(False).reshape((-1, 1)), device_info).astype(jnp.float32)
+    joint_transition_map["done"] = ma_done
+    # print(f"debug only: rew {ma_done.shape}")
     return joint_transition_map
 
 def print_transition_shape(transition: Dict[str, jnp.ndarray]):
@@ -101,7 +120,8 @@ class JaxFbxBuffer:
                                                  reward, 
                                                  actions, 
                                                  next_obs, 
-                                                 done)
+                                                 done,
+                                                 batch_input=False)
         dummy_transiton_map = generate_dummy_transition(transition_map)
         self.buffer_state = self.buffer.init(dummy_transiton_map)
         print_transition_shape(dummy_transiton_map)
@@ -111,7 +131,8 @@ class JaxFbxBuffer:
                   reward: Dict[str, float], 
                   actions: Dict[str, Any],  
                   next_obs: Dict[str, Any],
-                  done: Dict[str, bool]):
+                  done: Dict[str, bool],
+                  batch_input: bool=False):
         if self.buffer_state is None:
             print(f"buffer not init; please call init_buffer() first")
             return
@@ -119,7 +140,8 @@ class JaxFbxBuffer:
                                                  reward, 
                                                  actions, 
                                                  next_obs, 
-                                                 done)
+                                                 done,
+                                                 batch_input)
         # print(transition_map)
         self.buffer_state = self.buffer.add(self.buffer_state, transition_map)
     
