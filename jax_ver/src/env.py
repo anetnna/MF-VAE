@@ -9,7 +9,7 @@ from jaxmarl.environments.spaces import Box, Discrete, MultiDiscrete
 from typing import List, NamedTuple
 from functools import partial
 
-from jax_buffer import JaxFbxBuffer
+from .jax_buffer import JaxFbxBuffer
 
 
 class Transition(NamedTuple):

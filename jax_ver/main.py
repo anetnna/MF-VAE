@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 
 from src.jax_buffer import JaxFbxBuffer
-from src.env import get_space_dim
+from src.env import get_space_dim, EnvRolloutManager
 from model import MAVAE
 from jaxmarl import make
 from trainer import create_dataset, train_step, test_step
@@ -20,15 +20,66 @@ import os
 import time
 from datetime import datetime
 import gymnax
+from typing import Any, Dict, Tuple
 
-# def get_space_size(space_item):
-#     if isinstance(space_item, gymnax.environments.spaces.Discrete):
-#         space_shape = space_item.n
-#         return space_shape
-#     elif isinstance(space_item, gymnax.environments.spaces.Box):
-#         return space_item.shape[0]
-#     else:
-#         raise NotImplementedError
+
+def sample_from_env(env: EnvRolloutManager, 
+                    sample_buffer: JaxFbxBuffer, 
+                    sample_steps: int, 
+                    desc: str, 
+                    key_sample_env: Any)->JaxFbxBuffer:
+    obs, state = env.batch_reset(key_sample_env)
+    for _ in tqdm(range(sample_steps), desc=desc, leave=False):
+        actions = {agent: env.batch_sample(key_act[i], agent) \
+                    for i, agent in enumerate(env.agents)}
+        next_obs, state, reward, done, infos = env.batch_step(key_step, state, actions)
+        sample_buffer.add_trans(obs, reward, actions, next_obs, done, batch_input=True)
+        obs = next_obs
+        # print(done.values())
+        if any(done_array.any() for done_array in done.values()):
+            obs, state = env.batch_reset(key_reset)
+    return sample_buffer
+
+
+def apply_network(run_steps: int, 
+                  desc: str, 
+                  transition_buffer: JaxFbxBuffer, 
+                  agent_id_codebook: Dict[str, Any],
+                  task: str,
+                  train_net: Any) -> Tuple[float, float, float, float, Any]:
+    if task not in ["train", "test"]:
+        raise ValueError("task must be train or test")
+    loss_sum = 0.
+    s_loss_sum = 0.
+    r_loss_sum = 0.
+    kl_loss_sum = 0.
+    for _ in tqdm(range(run_steps), desc=desc, leave=False):
+        transitions = transition_buffer.sample(key_sample)
+        # print(f"debug only: transitions keys {transitions.keys()}")
+        idx_state_all, action_all, rewards, next_states = create_dataset(transitions.experience, agent_id_codebook)
+        if task == "train":
+            train_net, loss, s_loss, r_loss, kl_loss = train_step(train_net, 
+                                                                  idx_state_all, 
+                                                                  action_all, 
+                                                                  next_states, 
+                                                                  rewards, 
+                                                                  key_train,)
+        else:
+            loss, s_loss, r_loss, kl_loss = test_step(train_net, 
+                                                      idx_state_all, 
+                                                      action_all, 
+                                                      next_states, 
+                                                      rewards, 
+                                                      key_train,)
+        loss_sum += loss
+        s_loss_sum += s_loss
+        r_loss_sum += r_loss
+        kl_loss_sum += kl_loss
+    loss_sum /= train_num * 1.0
+    s_loss_sum /= train_num * 1.0
+    r_loss_sum /= train_num * 1.0
+    kl_loss_sum /= train_num * 1.0
+    return loss_sum, s_loss_sum, r_loss_sum, kl_loss_sum, train_net
 
 
 
@@ -36,10 +87,11 @@ if __name__ == "__main__":
     # hyper parameters
     ## training parameters
     epoch_num = 256
-    sample_num = 128
     batch_size = 128
-    train_num = (sample_num // batch_size) * 10
-    test_num = 64
+    env_batch_size = 8
+    sample_num = 128 // env_batch_size
+    train_num = ((sample_num * env_batch_size) // batch_size) * 10
+    test_num = train_num
     max_size = 10_000
     min_size = 64
     lr = 0.001
@@ -56,10 +108,11 @@ if __name__ == "__main__":
     key, key_reset, key_act, key_step, key_sample, key_model, key_train = jax.random.split(key, 7)
 
     ## create env
-    env = make('MPE_simple_tag_v3',
+    plain_env = make('MPE_simple_tag_v3',
                 num_good_agents=10,
                 num_adversaries=30,
                 num_obs=20,)
+    env = EnvRolloutManager(plain_env, batch_size=env_batch_size)
     agents_id = env.agents
     agent_id_codebook = {}
     for i, agent_id in enumerate(agents_id):
@@ -69,32 +122,27 @@ if __name__ == "__main__":
     buffer = JaxFbxBuffer(max_length=max_size, 
                           min_length=min_size, 
                           batch_size=batch_size, 
-                          add_batch=False)
+                          add_batch=True)
     test_buffer = JaxFbxBuffer(max_length=max_size, 
                                min_length=min_size, 
                                batch_size=batch_size, 
-                               add_batch=False)
+                               add_batch=True)
     # init buffer
-    obs, state = env.reset(key_reset)
+    obs, state = env.batch_reset(key_reset)
     key_act = jax.random.split(key_act, env.num_agents)
-    actions = {agent: env.action_space(agent).sample(key_act[i]) \
+    actions = {agent: env.batch_sample(key_act[i], agent) \
         for i, agent in enumerate(env.agents)}
     # print(f"debug only: @main: {env.action_space(agent_id).n}")
     # print(f"debug only: @main: {actions}")
-    next_obs, state, reward, done, infos = env.step(key_step, state, actions)
-    buffer.init_buffer(obs, reward, actions, next_obs, done)
-    test_buffer.init_buffer(obs, reward, actions, next_obs, done)
-
-    # tmp_buffer = JaxFbxBuffer(max_length=max_size, 
-    #                       min_length=min_size, 
-    #                       batch_size=batch_size, 
-    #                       add_batch=False)
-    # tmp_buffer.init_buffer(obs, reward, actions, next_obs, done)
-    # for _ in range(batch_size):
-    #     tmp_buffer.add_trans(obs, reward, actions, next_obs, done)
-    # transitions = tmp_buffer.sample(key_sample)
-    # # print(f"debug only: transitions keys {transitions.keys()}")
-    # idx_state_all, action_all, rewards, next_states = create_dataset(transitions.experience, agent_id_codebook)
+    next_obs, state, reward, done, infos = env.batch_step(key_step, state, actions)
+    
+    obs_unbatched = jax.tree_map(lambda x: x[0, :], obs)
+    reward_unbatched = jax.tree_map(lambda x: x[0, ], reward)
+    actions_unbatched = jax.tree_map(lambda x: x[0], actions)
+    next_obs_unbatched = jax.tree_map(lambda x: x[0, :], next_obs)
+    done_unbatched = jax.tree_map(lambda x: x[0], done)
+    buffer.init_buffer(obs_unbatched, reward_unbatched, actions_unbatched, next_obs_unbatched, done_unbatched)
+    test_buffer.init_buffer(obs_unbatched, reward_unbatched, actions_unbatched, next_obs_unbatched, done_unbatched)
 
     ## create model
     # gather observation and action dimension
@@ -103,7 +151,7 @@ if __name__ == "__main__":
     for agent_id in agents_id:
         # print(f"debug only: @main: {env.observation_space(agent_id)}")
         # obs_dim_all[agent_id] = get_space_size(env.observation_space(agent_id))
-        obs_dim_all[agent_id] = next_obs[agent_id].shape[0]
+        obs_dim_all[agent_id] = next_obs_unbatched[agent_id].shape[0]
         act_dim_all[agent_id] = get_space_dim(env.action_space(agent_id))
     # for agent_id in agents_id:
     #     print(f"debug only: @main: {agent_id} with shape {obs_dim_all[agent_id]}")
@@ -119,7 +167,7 @@ if __name__ == "__main__":
     fake_idx_state_all = {}
     fake_actions_all = {}
     for agent_id in agents_id:
-        fake_state_data = jnp.concatenate([jnp.full((1, ), 0.0), obs[agent_id]], axis=0)
+        fake_state_data = jnp.concatenate([jnp.full((1, ), 0.0), obs_unbatched[agent_id]], axis=0)
         # print(f"debug only: obs[agent_id] shape: {obs[agent_id].reshape(-1,1).shape}")
         # print(f"debug ony: fake state shape 1: {fake_state_data.shape}")
         # fake_state_data = fake_state_data[jnp.newaxis, :, :]
@@ -128,7 +176,7 @@ if __name__ == "__main__":
         fake_state_data = jnp.repeat(fake_state_data, repeats=batch_size, axis=0)
         fake_idx_state_all[agent_id] = fake_state_data
 
-        fake_action_data = actions[agent_id][jnp.newaxis, ] # gymnasium.spaces.Discrete
+        fake_action_data = actions_unbatched[agent_id][jnp.newaxis, ] # gymnasium.spaces.Discrete
         fake_action_data = jnp.repeat(fake_action_data, repeats=batch_size, axis=0)
         fake_actions_all[agent_id] = fake_action_data
         # print(f"debug ony: @main: fake state shape: {fake_state_data.shape}")
@@ -151,92 +199,35 @@ if __name__ == "__main__":
     for epoch_i in pbar:
         # training epsiode start
         # first sample to fill replay buffer
-        for _ in tqdm(range(sample_num), desc="Sample step", leave=False):
-            actions = {agent: env.action_space(agent).sample(key_act[i]) \
-                       for i, agent in enumerate(env.agents)}
-            next_obs, state, reward, done, infos = env.step(key_step, state, actions)
-            buffer.add_trans(obs, reward, actions, next_obs, done)
-            obs = next_obs
-            if True in done.values():
-                obs, state = env.reset(key_reset)
-            # after filling replay buffer, sample batch to train vae
-            # loss_sum = model_trainer.training_model(batched_replay_buffer, train_num, agent_id_codebook)
-        loss_sum = 0.
-        s_loss_sum = 0.
-        r_loss_sum = 0.
-        kl_loss_sum = 0.
-        for train_setp_i in tqdm(range(train_num), desc="Training vae step", leave=False):
-            transitions = buffer.sample(key_sample)
-            # print(f"debug only: transitions keys {transitions.keys()}")
-            idx_state_all, action_all, rewards, next_states = create_dataset(transitions.experience, agent_id_codebook)
-            # train_step_i = epoch_i * train_num + step_i
-            # train_state_old = train_state
-            train_state, loss, s_loss, r_loss, kl_loss = train_step(train_state, 
-                                                                    idx_state_all, 
-                                                                    action_all, 
-                                                                    next_states, 
-                                                                    rewards, 
-                                                                    key_train,)
-            # print(train_state_old.params['Encoder_0']['Dense_0']['bias'])
-            # print(f"debug ony: @main: step: {train_setp_i}, epoch: {epoch_i}, param: {train_state.params['Encoder_0']['Dense_0']['bias']}")
-            # exit()
-            loss_sum += loss
-            s_loss_sum += s_loss
-            r_loss_sum += r_loss
-            kl_loss_sum += kl_loss
-        loss_sum /= train_num * 1.0
-        s_loss_sum /= train_num * 1.0
-        r_loss_sum /= train_num * 1.0
-        kl_loss_sum /= train_num * 1.0
-        logger.add_scalar('Loss/Train', loss_sum, epoch_i)
-        logger.add_scalar('Loss/State_Train', s_loss, epoch_i)
-        logger.add_scalar('Loss/Reward_Train', r_loss,epoch_i)
-        logger.add_scalar('Loss/KL_Train', kl_loss, epoch_i)
+        buffer = sample_from_env(env, buffer, sample_num, "Sample steps", key_reset)
+        loss_sum, s_loss_sum, r_loss_sum, kl_loss_sum, train_state = apply_network(train_num, 
+                                                                                   "Training VAE steps",
+                                                                                   buffer,
+                                                                                   agent_id_codebook,
+                                                                                   "train",
+                                                                                   train_state)
 
-        for _ in tqdm(range(sample_num), desc="Test sample step", leave=False):
-            actions = {agent: env.action_space(agent).sample(key_act[i]) \
-                       for i, agent in enumerate(env.agents)}
-            next_obs, state, reward, done, infos = env.step(key_step, state, actions)
-            test_buffer.add_trans(obs, reward, actions, next_obs, done)
-            obs = next_obs
-            if True in done.values():
-                obs, state = env.reset(key_reset)
+        logger.add_scalar('Loss/Train', loss_sum, epoch_i)
+        logger.add_scalar('Loss/State_Train', s_loss_sum, epoch_i)
+        logger.add_scalar('Loss/Reward_Train', r_loss_sum,epoch_i)
+        logger.add_scalar('Loss/KL_Train', kl_loss_sum, epoch_i)
+
+        test_buffer = sample_from_env(env, test_buffer, sample_num, "Test sample steps", key_reset)
+        loss_sum, s_loss_sum, r_loss_sum, kl_loss_sum, train_state = apply_network(test_num, 
+                                                                                   "Test VAE step",
+                                                                                   test_buffer,
+                                                                                   agent_id_codebook,
+                                                                                   "test",
+                                                                                   train_state)
         
-        loss_sum = 0.
-        s_loss_sum = 0.
-        r_loss_sum = 0.
-        kl_loss_sum = 0.
-        for train_setp_i in tqdm(range(test_num), desc="Test vae step", leave=False):
-            transitions = test_buffer.sample(key_sample)
-            # print(f"debug only: transitions keys {transitions.keys()}")
-            idx_state_all, action_all, rewards, next_states = create_dataset(transitions.experience, agent_id_codebook)
-            # train_step_i = epoch_i * train_num + step_i
-            # train_state_old = train_state
-            loss, s_loss, r_loss, kl_loss = test_step(train_state, 
-                                                      idx_state_all, 
-                                                      action_all, 
-                                                      next_states, 
-                                                      rewards, 
-                                                      key_train,)
-            # print(train_state_old.params['Encoder_0']['Dense_0']['bias'])
-            # print(f"debug ony: @main: step: {train_setp_i}, epoch: {epoch_i}, param: {train_state.params['Encoder_0']['Dense_0']['bias']}")
-            # exit()
-            loss_sum += loss
-            s_loss_sum += s_loss
-            r_loss_sum += r_loss
-            kl_loss_sum += kl_loss
-        loss_sum /= train_num * 1.0
-        s_loss_sum /= train_num * 1.0
-        r_loss_sum /= train_num * 1.0
-        kl_loss_sum /= train_num * 1.0
         logger.add_scalar('Loss/Test', loss_sum, epoch_i)
-        logger.add_scalar('Loss/State_Test', s_loss, epoch_i)
-        logger.add_scalar('Loss/Reward_Test', r_loss,epoch_i)
-        logger.add_scalar('Loss/KL_Test', kl_loss, epoch_i)
+        logger.add_scalar('Loss/State_Test', s_loss_sum, epoch_i)
+        logger.add_scalar('Loss/Reward_Test', r_loss_sum,epoch_i)
+        logger.add_scalar('Loss/KL_Test', kl_loss_sum, epoch_i)
     
     end_time = time.time()
 
-    with open('./model_save/vae/model_state.pkl', 'wb') as f:
+    with open('./model_save/vae/model_batch_state.pkl', 'wb') as f:
         pickle.dump(train_state.params, f)
     
     # print(f"obs shape: {observations['adversary_0'].shape}")
