@@ -105,7 +105,6 @@ class MAVAE(nn.Module):
     agents: list
     obs_dim: dict
     action_dim: dict
-    # 移除device参数，JAX会自动处理设备放置
 
     def setup(self):
         encoders = {}
@@ -198,4 +197,154 @@ class MAVAE(nn.Module):
         
         return recon_state, recon_reward, mu_all, log_var_all
 
-    # JAX/Flax不需要专门的save方法，因为模型的参数可以直接通过外部函数保存
+    def output_latent(self, 
+                      idx_state, 
+                      rng_key):
+        mu_all = []
+        log_var_all = []
+        for agent_id in idx_state.keys():
+            id_obs = idx_state[agent_id]
+            idx_emb_output = self.idx_emb(jnp.floor(id_obs[:, 0]).astype(jnp.int32))
+            idx_obs_emb = jnp.concatenate((idx_emb_output, id_obs[:, 1:]), axis=1)
+            latent_rep = self.encoders[agent_id](idx_obs_emb)
+
+            rng_key, sub_key = random.split(rng_key)
+
+            mu = latent_rep[:, :self.obs_features]
+            log_var = latent_rep[:, self.obs_features:]
+            mu_all.append(mu)
+            log_var_all.append(log_var)
+
+        mu_all = jnp.concatenate(mu_all, axis=0)
+        log_var_all = jnp.concatenate(log_var_all, axis=0)
+        return mu_all, log_var_all
+
+
+def attention_func(z: list) -> list:
+    n = len(z)
+    # batch_size, feature_dim = z[0].shape
+
+    Z_stack = jnp.stack(z, axis=0) # Z_stack shape: [n, batch_size, feature_dim]
+    scores = jnp.einsum('ijk,ilk->ijl', Z_stack, Z_stack) # 这里使用 einsum 进行批量的点积计算
+    attention_weights = jax.nn.softmax(scores, axis=-1)
+    weighted_sum = jnp.einsum('ijl,ilk->ijk', attention_weights, Z_stack)
+
+    updated_Z = [weighted_sum[i, :, :] for i in range(n)]
+
+    return updated_Z
+
+
+class MAVAEAtten(nn.Module):
+    idx_features: int
+    obs_features: int
+    action_features: int
+    descrete_act: bool
+    agents: list
+    obs_dim: dict
+    action_dim: dict
+
+    def setup(self):
+        encoders = {}
+        self.idx_emb = Embedding(num_embeddings=len(self.agents), embedding_dim=self.idx_features)
+        action_encoders = {}
+        for agent_id in self.agents:
+            encoders[agent_id] = Encoder(
+                self.obs_dim[agent_id] + self.idx_features, 
+                2*self.obs_features
+            )
+            if self.descrete_act:
+                action_encoders[agent_id] = Embedding(
+                    num_embeddings=self.action_dim[agent_id], 
+                    embedding_dim=self.action_features
+                )
+            else:
+                action_encoders[agent_id] = ActionEncoder(self.action_dim[agent_id], self.action_features)
+        self.encoders = encoders
+        self.action_encoders = action_encoders
+
+        decoders = {}
+        reward_decoders = {}
+        for agent_id in self.agents:
+            decoders[agent_id] = Decoder(
+                self.obs_features + self.action_features,
+                self.obs_dim[agent_id]
+            )
+            reward_decoders[agent_id] = Decoder(
+                self.obs_features + self.action_features,
+                1
+            )
+        self.decoders = decoders
+        self.reward_decoders = reward_decoders
+
+    @nn.compact
+    def __call__(self, 
+                 idx_state,
+                 actions, 
+                 rng_key):
+        # 初始化 Embedding 和各种 Encoder
+        z_all = []
+        mu_all = []
+        log_var_all = []
+        actions_emb = []
+
+        agent_ids = idx_state.keys()
+        for agent_id in agent_ids:
+            id_obs = idx_state[agent_id]
+            idx_emb_output = self.idx_emb(jnp.floor(id_obs[:, 0]).astype(jnp.int32))
+            idx_obs_emb = jnp.concatenate((idx_emb_output, id_obs[:, 1:]), axis=1)
+            latent_rep = self.encoders[agent_id](idx_obs_emb)
+
+            rng_key, sub_key = random.split(rng_key)
+
+            if self.descrete_act:
+                action_emb = self.action_encoders[agent_id](actions[agent_id].astype(jnp.int32))
+            else:
+                action_emb = self.action_encoders[agent_id](actions[agent_id])
+            
+            mu = latent_rep[:, :self.obs_features]
+            log_var = latent_rep[:, self.obs_features:]
+            
+            actions_emb.append(action_emb)
+            mu_all.append(mu)
+            log_var_all.append(log_var)
+
+        mu_atten_all = attention_func(mu_all)
+        logvar_atten_all = attention_func(log_var_all)
+
+        recon_state = {}
+        recon_reward = {}
+        for i, agent_id in enumerate(agent_ids):
+            z = reparameterize(mu_atten_all[i], logvar_atten_all[i], sub_key)
+            latent_rep = jnp.concatenate([z, actions_emb[i]], axis=1)
+            recon_state[agent_id] = self.decoders[agent_id](latent_rep)
+            recon_reward[agent_id] = self.reward_decoders[agent_id](latent_rep)
+        return recon_state, recon_reward, mu_all, log_var_all
+
+    def output_latent(self, 
+                      idx_state, 
+                      rng_key):
+        mu_all = []
+        log_var_all = []
+        for agent_id in idx_state.keys():
+            id_obs = idx_state[agent_id]
+            idx_emb_output = self.idx_emb(jnp.floor(id_obs[:, 0]).astype(jnp.int32))
+            idx_obs_emb = jnp.concatenate((idx_emb_output, id_obs[:, 1:]), axis=1)
+            latent_rep = self.encoders[agent_id](idx_obs_emb)
+
+            rng_key, sub_key = random.split(rng_key)
+
+            mu = latent_rep[:, :self.obs_features]
+            log_var = latent_rep[:, self.obs_features:]
+            mu_all.append(mu)
+            log_var_all.append(log_var)
+        
+        mu_atten_all = attention_func(mu_all)
+        logvar_atten_all = attention_func(log_var_all)
+
+        mu_all = jnp.concatenate(mu_all, axis=0)
+        log_var_all = jnp.concatenate(log_var_all, axis=0)
+        mu_atten_all = jnp.concatenate(mu_atten_all, axis=0)
+        logvar_atten_all = jnp.concatenate(logvar_atten_all, axis=0)
+
+        return mu_all, log_var_all, mu_atten_all, logvar_atten_all
+
