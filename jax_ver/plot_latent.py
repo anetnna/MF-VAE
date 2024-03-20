@@ -4,7 +4,7 @@ import numpy as np
 
 from src.jax_buffer import JaxFbxBuffer
 from src.env import get_space_dim, EnvRolloutManager
-from model import MAVAE
+from model import MAVAE, MAVAEAtten
 from jaxmarl import make
 from trainer import create_dataset, train_step, test_step
 from tqdm import tqdm
@@ -48,6 +48,23 @@ def load_jax_params(model_path):
     with open(model_path, 'rb') as f:
         jax_params = pickle.load(f)
     return jax_params
+
+
+def plot_variable(in_variable, fig_name, save_name):
+    in_variable_reduced = TSNE(n_components=2).fit_transform(in_variable)
+
+    plt.figure(figsize=(8, 6))
+    for i in range(env.num_agents):
+        idx = agent_index == i
+        plt.scatter(in_variable_reduced[i*batch_size:(i+1)*batch_size, 0], 
+                    in_variable_reduced[i*batch_size:(i+1)*batch_size, 1], 
+                    color=colors[i % 20], 
+                    marker=markers[i // 20])
+    # plt.scatter(logvar_reduced[:, 0], logvar_reduced[:, 1], c=agent_index, alpha=0.5)
+    plt.xlabel('t-SNE Dimension 1')
+    plt.ylabel('t-SNE Dimension 2')
+    plt.title(f't-SNE Visualization of {fig_name} Latent Variables')
+    plt.savefig(f"./model_save/result_figs/{save_name}.png")
 
 
 if __name__ == "__main__":
@@ -100,8 +117,12 @@ if __name__ == "__main__":
     buffer.init_buffer(obs_unbatched, reward_unbatched, actions_unbatched, next_obs_unbatched, done_unbatched)
 
     # load model
+    using_atten = True
     ## parameters
-    model_path = "/home/huaze/enze/jax-mf-vae/jax_ver/model_save/vae/model_batch_state.pkl"
+    if using_atten:
+        model_path = "/home/huaze/enze/jax-mf-vae/jax_ver/model_save/vae/model_batch_state_right_atten.pkl"
+    else:
+        model_path = "/home/huaze/enze/jax-mf-vae/jax_ver/model_save/vae/model_batch_state.pkl"
     jax_params = load_jax_params(model_path)
     jax_params = freeze(jax_params)
 
@@ -112,24 +133,32 @@ if __name__ == "__main__":
     for agent_id in agents_id:
         obs_dim_all[agent_id] = obs_unbatched[agent_id].shape[0]
         act_dim_all[agent_id] = get_space_dim(env.action_space(agent_id))
-    
-    model = MAVAE(idx_features=IDX_FEATURES, 
-                  obs_features=OBS_FEATURES, 
-                  action_features=ACT_FEATURES, 
-                  descrete_act=DESCRETE_ACT, 
-                  agents=agents_id, 
-                  obs_dim=obs_dim_all, 
-                  action_dim=act_dim_all)
+    if using_atten:
+        model = MAVAEAtten(idx_features=IDX_FEATURES, 
+                    obs_features=OBS_FEATURES, 
+                    action_features=ACT_FEATURES, 
+                    descrete_act=DESCRETE_ACT, 
+                    agents=agents_id, 
+                    obs_dim=obs_dim_all, 
+                    action_dim=act_dim_all)
+    else:
+        model = MAVAE(idx_features=IDX_FEATURES, 
+                    obs_features=OBS_FEATURES, 
+                    action_features=ACT_FEATURES, 
+                    descrete_act=DESCRETE_ACT, 
+                    agents=agents_id, 
+                    obs_dim=obs_dim_all, 
+                    action_dim=act_dim_all)
     
     buffer = sample_from_env(env, buffer, sample_num, "Sample steps", key_reset)
     transitions = buffer.sample(key_sample)
     idx_state_all, _, _, _ = create_dataset(transitions.experience, agent_id_codebook)
-
-    output_mu, output_logvar = model.apply({'params': jax_params}, idx_state_all, key_train, method=model.output_latent)
+    if using_atten:
+        output_mu, output_logvar, output_mu_atten, output_logvar_atten = model.apply({'params': jax_params}, idx_state_all, key_train, method=model.output_latent)
+    else:
+        output_mu, output_logvar = model.apply({'params': jax_params}, idx_state_all, key_train, method=model.output_latent)
     print(f"mu shape: {output_mu.shape}")
     print(f"logvar shape: {output_logvar.shape}")
-    
-    mu_reduced = TSNE(n_components=2).fit_transform(output_mu)
 
     agent_index = []
     for i in range(env.num_agents):
@@ -138,24 +167,34 @@ if __name__ == "__main__":
     markers = ['o', 's']  # 'o' 和 's' 分别表示圆形和方形
     colors = plt.cm.tab20(np.linspace(0, 1, 20))
 
-    plt.figure(figsize=(8, 6))
-    # plt.scatter(mu_reduced[:, 0], mu_reduced[:, 1], c=agent_index, alpha=0.5)
-    for i in range(env.num_agents):
-        plt.scatter(mu_reduced[i*batch_size:(i+1)*batch_size, 0], mu_reduced[i*batch_size:(i+1)*batch_size, 1], color=colors[i % 20], marker=markers[i // 20])
+    if using_atten:
+        plot_variable(output_mu, 'Mu', 'atten_mu')
+        plot_variable(output_logvar, 'Log_var', 'atten_log_var')
+        plot_variable(output_mu_atten, 'Mu Atten', 'atten_mu_atten')
+        plot_variable(output_logvar_atten, 'Log_var Atten', 'atten_log_var_atten')
+    else:
+        plot_variable(output_mu, 'Mu', 'mu')
+        plot_variable(output_logvar, 'Log_var', 'log_var')
 
-    plt.xlabel('t-SNE Dimension 1')
-    plt.ylabel('t-SNE Dimension 2')
-    plt.title('t-SNE Visualization of Mu Latent Variables')
-    plt.savefig("./model_save/result_figs/mu.png")
+    # mu_reduced = TSNE(n_components=2).fit_transform(output_mu)
+    # plt.figure(figsize=(8, 6))
+    # # plt.scatter(mu_reduced[:, 0], mu_reduced[:, 1], c=agent_index, alpha=0.5)
+    # for i in range(env.num_agents):
+    #     plt.scatter(mu_reduced[i*batch_size:(i+1)*batch_size, 0], mu_reduced[i*batch_size:(i+1)*batch_size, 1], color=colors[i % 20], marker=markers[i // 20])
+
+    # plt.xlabel('t-SNE Dimension 1')
+    # plt.ylabel('t-SNE Dimension 2')
+    # plt.title('t-SNE Visualization of Mu Latent Variables')
+    # plt.savefig("./model_save/result_figs/mu_atten.png")
     
-    logvar_reduced = TSNE(n_components=2).fit_transform(output_logvar)
+    # logvar_reduced = TSNE(n_components=2).fit_transform(output_logvar)
 
-    plt.figure(figsize=(8, 6))
-    for i in range(env.num_agents):
-        idx = agent_index == i
-        plt.scatter(logvar_reduced[i*batch_size:(i+1)*batch_size, 0], logvar_reduced[i*batch_size:(i+1)*batch_size, 1], color=colors[i % 20], marker=markers[i // 20])
-    # plt.scatter(logvar_reduced[:, 0], logvar_reduced[:, 1], c=agent_index, alpha=0.5)
-    plt.xlabel('t-SNE Dimension 1')
-    plt.ylabel('t-SNE Dimension 2')
-    plt.title('t-SNE Visualization of Log Var Latent Variables')
-    plt.savefig("./model_save/result_figs/var.png")
+    # plt.figure(figsize=(8, 6))
+    # for i in range(env.num_agents):
+    #     idx = agent_index == i
+    #     plt.scatter(logvar_reduced[i*batch_size:(i+1)*batch_size, 0], logvar_reduced[i*batch_size:(i+1)*batch_size, 1], color=colors[i % 20], marker=markers[i // 20])
+    # # plt.scatter(logvar_reduced[:, 0], logvar_reduced[:, 1], c=agent_index, alpha=0.5)
+    # plt.xlabel('t-SNE Dimension 1')
+    # plt.ylabel('t-SNE Dimension 2')
+    # plt.title('t-SNE Visualization of Log Var Latent Variables')
+    # plt.savefig("./model_save/result_figs/var_atten.png")

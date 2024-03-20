@@ -242,7 +242,7 @@ if __name__ == "__main__":
     
     end_time = time.time()
 
-    with open('./model_save/vae/model_batch_state_atten.pkl', 'wb') as f:
+    with open('./model_save/vae/model_batch_state_right_atten.pkl', 'wb') as f:
         pickle.dump(train_state.params, f)
     
     # print(f"obs shape: {observations['adversary_0'].shape}")

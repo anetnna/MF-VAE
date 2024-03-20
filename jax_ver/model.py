@@ -225,7 +225,8 @@ def attention_func(z: list) -> list:
     # batch_size, feature_dim = z[0].shape
 
     Z_stack = jnp.stack(z, axis=0) # Z_stack shape: [n, batch_size, feature_dim]
-    scores = jnp.einsum('ijk,ilk->ijl', Z_stack, Z_stack) # 这里使用 einsum 进行批量的点积计算
+    d_k = Z_stack.shape[-1]
+    scores = jnp.einsum('ijk,ilk->ijl', Z_stack, Z_stack) / jnp.sqrt(d_k) # 这里使用 einsum 进行批量的点积计算
     attention_weights = jax.nn.softmax(scores, axis=-1)
     weighted_sum = jnp.einsum('ijl,ilk->ijk', attention_weights, Z_stack)
 

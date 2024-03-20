@@ -9,8 +9,6 @@ from jaxmarl.environments.spaces import Box, Discrete, MultiDiscrete
 from typing import List, NamedTuple
 from functools import partial
 
-from .jax_buffer import JaxFbxBuffer
-
 
 class Transition(NamedTuple):
     obs: dict
@@ -141,6 +139,8 @@ if __name__ == "__main__":
     print(done['__all__'])
 
     # test interaction with buffer
+    from .jax_buffer import JaxFbxBuffer
+
     buffer = JaxFbxBuffer(max_length=10_000, 
                           min_length=64, 
                           batch_size=256, 
