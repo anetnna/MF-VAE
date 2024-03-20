@@ -281,7 +281,6 @@ class MAVAEAtten(nn.Module):
                  idx_state,
                  actions, 
                  rng_key):
-        # 初始化 Embedding 和各种 Encoder
         z_all = []
         mu_all = []
         log_var_all = []

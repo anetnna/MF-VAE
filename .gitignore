@@ -1,3 +1,5 @@
 *.pkl
 *.ipynb
 checkpoints/
+model_save/
+results/

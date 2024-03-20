@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from src.jax_buffer import JaxFbxBuffer
 from src.env import get_space_dim, EnvRolloutManager
@@ -134,8 +135,14 @@ if __name__ == "__main__":
     for i in range(env.num_agents):
         agent_index += [i]*batch_size
 
+    markers = ['o', 's']  # 'o' 和 's' 分别表示圆形和方形
+    colors = plt.cm.tab20(np.linspace(0, 1, 20))
+
     plt.figure(figsize=(8, 6))
-    plt.scatter(mu_reduced[:, 0], mu_reduced[:, 1], c=agent_index, alpha=0.5)
+    # plt.scatter(mu_reduced[:, 0], mu_reduced[:, 1], c=agent_index, alpha=0.5)
+    for i in range(env.num_agents):
+        plt.scatter(mu_reduced[i*batch_size:(i+1)*batch_size, 0], mu_reduced[i*batch_size:(i+1)*batch_size, 1], color=colors[i % 20], marker=markers[i // 20])
+
     plt.xlabel('t-SNE Dimension 1')
     plt.ylabel('t-SNE Dimension 2')
     plt.title('t-SNE Visualization of Mu Latent Variables')
@@ -144,7 +151,10 @@ if __name__ == "__main__":
     logvar_reduced = TSNE(n_components=2).fit_transform(output_logvar)
 
     plt.figure(figsize=(8, 6))
-    plt.scatter(logvar_reduced[:, 0], logvar_reduced[:, 1], c=agent_index, alpha=0.5)
+    for i in range(env.num_agents):
+        idx = agent_index == i
+        plt.scatter(logvar_reduced[i*batch_size:(i+1)*batch_size, 0], logvar_reduced[i*batch_size:(i+1)*batch_size, 1], color=colors[i % 20], marker=markers[i // 20])
+    # plt.scatter(logvar_reduced[:, 0], logvar_reduced[:, 1], c=agent_index, alpha=0.5)
     plt.xlabel('t-SNE Dimension 1')
     plt.ylabel('t-SNE Dimension 2')
     plt.title('t-SNE Visualization of Log Var Latent Variables')
