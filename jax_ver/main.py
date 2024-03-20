@@ -3,7 +3,7 @@ import jax.numpy as jnp
 
 from src.jax_buffer import JaxFbxBuffer
 from src.env import get_space_dim, EnvRolloutManager
-from model import MAVAE
+from model import MAVAE, MAVAEAtten
 from jaxmarl import make
 from trainer import create_dataset, train_step, test_step
 from tqdm import tqdm
@@ -46,7 +46,8 @@ def apply_network(run_steps: int,
                   transition_buffer: JaxFbxBuffer, 
                   agent_id_codebook: Dict[str, Any],
                   task: str,
-                  train_net: Any) -> Tuple[float, float, float, float, Any]:
+                  train_net: Any,
+                  multi_agent_output: bool=False) -> Tuple[float, float, float, float, Any]:
     if task not in ["train", "test"]:
         raise ValueError("task must be train or test")
     loss_sum = 0.
@@ -56,7 +57,9 @@ def apply_network(run_steps: int,
     for _ in tqdm(range(run_steps), desc=desc, leave=False):
         transitions = transition_buffer.sample(key_sample)
         # print(f"debug only: transitions keys {transitions.keys()}")
-        idx_state_all, action_all, rewards, next_states = create_dataset(transitions.experience, agent_id_codebook)
+        idx_state_all, action_all, rewards, next_states = create_dataset(transitions.experience, 
+                                                                         agent_id_codebook,
+                                                                         multi_agent_output)
         if task == "train":
             train_net, loss, s_loss, r_loss, kl_loss = train_step(train_net, 
                                                                   idx_state_all, 
@@ -157,13 +160,23 @@ if __name__ == "__main__":
     #     print(f"debug only: @main: {agent_id} with shape {obs_dim_all[agent_id]}")
 
     # create model with dim information
-    model = MAVAE(idx_features=IDX_FEATURES, 
-                  obs_features=OBS_FEATURES, 
-                  action_features=ACT_FEATURES, 
-                  descrete_act=DESCRETE_ACT, 
-                  agents=agents_id, 
-                  obs_dim=obs_dim_all, 
-                  action_dim=act_dim_all)
+    using_attention = True
+    if not using_attention:
+        model = MAVAE(idx_features=IDX_FEATURES, 
+                        obs_features=OBS_FEATURES, 
+                        action_features=ACT_FEATURES, 
+                        descrete_act=DESCRETE_ACT, 
+                        agents=agents_id, 
+                        obs_dim=obs_dim_all, 
+                        action_dim=act_dim_all)
+    else:
+        model = MAVAEAtten(idx_features=IDX_FEATURES, 
+                        obs_features=OBS_FEATURES, 
+                        action_features=ACT_FEATURES, 
+                        descrete_act=DESCRETE_ACT, 
+                        agents=agents_id, 
+                        obs_dim=obs_dim_all, 
+                        action_dim=act_dim_all)
     fake_idx_state_all = {}
     fake_actions_all = {}
     for agent_id in agents_id:
@@ -190,7 +203,7 @@ if __name__ == "__main__":
     
     # create logger
     run_dir = Path(os.path.dirname(os.path.abspath(__file__))
-                   + "/results") / f'test_huber_loss_ls_{lr}_10_30_20_setup_better_trainer_{datetime.now().strftime("%Y-%m-%d-%H:%M:%S")}'
+                   + "/results") / f'atten_ls_{lr}_{datetime.now().strftime("%Y-%m-%d-%H:%M:%S")}'
     logger = SummaryWriter(run_dir)
 
     ## main loop
@@ -205,7 +218,8 @@ if __name__ == "__main__":
                                                                                    buffer,
                                                                                    agent_id_codebook,
                                                                                    "train",
-                                                                                   train_state)
+                                                                                   train_state,
+                                                                                   using_attention)
 
         logger.add_scalar('Loss/Train', loss_sum, epoch_i)
         logger.add_scalar('Loss/State_Train', s_loss_sum, epoch_i)
@@ -218,7 +232,8 @@ if __name__ == "__main__":
                                                                                    test_buffer,
                                                                                    agent_id_codebook,
                                                                                    "test",
-                                                                                   train_state)
+                                                                                   train_state,
+                                                                                   using_attention)
         
         logger.add_scalar('Loss/Test', loss_sum, epoch_i)
         logger.add_scalar('Loss/State_Test', s_loss_sum, epoch_i)
@@ -227,7 +242,7 @@ if __name__ == "__main__":
     
     end_time = time.time()
 
-    with open('./model_save/vae/model_batch_state.pkl', 'wb') as f:
+    with open('./model_save/vae/model_batch_state_atten.pkl', 'wb') as f:
         pickle.dump(train_state.params, f)
     
     # print(f"obs shape: {observations['adversary_0'].shape}")

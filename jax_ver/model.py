@@ -317,6 +317,9 @@ class MAVAEAtten(nn.Module):
             latent_rep = jnp.concatenate([z, actions_emb[i]], axis=1)
             recon_state[agent_id] = self.decoders[agent_id](latent_rep)
             recon_reward[agent_id] = self.reward_decoders[agent_id](latent_rep)
+        
+        mu_all = jnp.concatenate(mu_all, axis=1)
+        log_var_all = jnp.concatenate(log_var_all, axis=1)
         return recon_state, recon_reward, mu_all, log_var_all
 
     def output_latent(self, 
