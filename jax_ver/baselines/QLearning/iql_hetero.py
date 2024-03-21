@@ -34,6 +34,7 @@ from src.jax_buffer import JaxFbxTrajBuffer, Transition
 from tensorboardX import SummaryWriter
 from pathlib import Path
 from datetime import datetime
+from tqdm import tqdm
 
 import chex
 import optax
@@ -472,18 +473,19 @@ def make_train(config, env):
             metrics['test_metrics'] = test_metrics # add the test metrics dictionary
 
             # logger
-            def callback(metrics, infos):
-                info_metrics = {
-                        k:v[...,0][infos["returned_episode"][..., 0]].mean()
-                        for k,v in infos.items() if k!="returned_episode"
-                    }
+            def callback(metrics):
+                # info_metrics = {
+                #         k:v[...,0][infos["returned_episode"][..., 0]].mean()
+                #         for k,v in infos.items() if k!="returned_episode"
+                #     }
                 logger.add_scalar('Loss/Train', metrics['loss'])
-                for k, v in metrics['rewards']:
+                # print(metrics['rewards'])
+                for k, v in metrics['rewards'].items():
                     reward_value = jax.device_get(v.mean())
                     logger.add_scalar(f'Return_{k}/Train', reward_value)
-                for k, v in metrics['test_metrics']:
+                for k, v in metrics['test_metrics'].items():
                     logger.add_scalar(f'{k}/Test', jax.device_get(v.mean()))
-            jax.debug.callback(callback, metrics, traj_batch.infos)
+            jax.debug.callback(callback, metrics)
 
             runner_state = (
                 train_state,
@@ -583,9 +585,12 @@ def make_train(config, env):
             test_metrics,
             _rng
         )
-        runner_state, metrics = jax.lax.scan(
-            _update_step, runner_state, None, config["NUM_UPDATES"]
-        )
+        # runner_state, metrics = jax.lax.scan(
+        #     _update_step, runner_state, None, config["NUM_UPDATES"]
+        # )
+        pbar = tqdm(range(config["NUM_UPDATES"]), desc="Training episode")
+        for epoch_i in pbar:
+            runner_state, metrics = _update_step(runner_state, None)
         return {'runner_state':runner_state, 'metrics':metrics}
     
     return train
