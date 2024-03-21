@@ -43,6 +43,10 @@ def create_joint_transition(obs: Dict[str, Any],
 
     # Iterate over each agent to construct their individual transition
     ma_done = None
+    # if not batch_input:
+    #     print("in buffer", action['agent_0'])
+    # else:
+    #     print("in buffer", action['agent_0'][0])
     for agent_id in agents:
         # Check if all required keys are present for the agent
         if next_obs is not None:
@@ -56,21 +60,25 @@ def create_joint_transition(obs: Dict[str, Any],
         # Add each component of the transition to the joint transition map
         if not batch_input and not traj_input:
             joint_transition_map[f"{agent_id}_obs"] = obs[agent_id].reshape((-1, 1))
-            joint_transition_map[f"{agent_id}_act"] = action[agent_id].reshape((-1, 1)).astype(jnp.float32)
+            # joint_transition_map[f"{agent_id}_act"] = jnp.asarray(action[agent_id].reshape((-1, 1)), dtype=jnp.float32)
+            joint_transition_map[f"{agent_id}_act"] = action[agent_id].reshape((-1, 1))
             if next_obs is not None:
                 joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id].reshape((-1, 1))
-            joint_transition_map[f"{agent_id}_rew"] = reward[agent_id].reshape((-1, 1)).astype(jnp.float32)
-            joint_transition_map[f"{agent_id}_done"] = done[agent_id].reshape((-1, 1)).astype(jnp.float32)
+            joint_transition_map[f"{agent_id}_rew"] = reward[agent_id].reshape((-1, 1))
+            # joint_transition_map[f"{agent_id}_rew"] = jnp.asarray(reward[agent_id].reshape((-1, 1)), dtype=jnp.float32)
+            joint_transition_map[f"{agent_id}_done"] = jnp.asarray(done[agent_id].reshape((-1, 1)), dtype=jnp.float32)
             if done[agent_id]:
                 device_info = obs[agent_id].device()
-                ma_done = jax.device_put(jnp.array(True).reshape((-1, 1)), device_info).astype(jnp.float32)
+                ma_done = jax.device_put(jnp.array(1.0).reshape((-1, 1)), device_info)
         elif batch_input and not traj_input:
             joint_transition_map[f"{agent_id}_obs"] = obs[agent_id][:, :, jnp.newaxis]
-            joint_transition_map[f"{agent_id}_act"] = action[agent_id][:, jnp.newaxis, jnp.newaxis].astype(jnp.float32)
+            joint_transition_map[f"{agent_id}_act"] = action[agent_id][:, jnp.newaxis, jnp.newaxis]
+            # joint_transition_map[f"{agent_id}_act"] = jnp.asarray(action[agent_id][:, jnp.newaxis, jnp.newaxis], dtype=jnp.float32)
             if next_obs is not None:
                 joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id][:, :, jnp.newaxis]
-            joint_transition_map[f"{agent_id}_rew"] = reward[agent_id][:, jnp.newaxis, jnp.newaxis].astype(jnp.float32)
-            joint_transition_map[f"{agent_id}_done"] = done[agent_id][:, jnp.newaxis, jnp.newaxis].astype(jnp.float32)
+            joint_transition_map[f"{agent_id}_rew"] = reward[agent_id][:, jnp.newaxis, jnp.newaxis]
+            # joint_transition_map[f"{agent_id}_rew"] = jnp.asarray(reward[agent_id][:, jnp.newaxis, jnp.newaxis], dtype=jnp.float32)
+            joint_transition_map[f"{agent_id}_done"] = jnp.asarray(done[agent_id][:, jnp.newaxis, jnp.newaxis], dtype=jnp.float32)
             ma_done = done['__all__'][:, jnp.newaxis, jnp.newaxis].astype(jnp.float32)
         # elif batch_input and traj_input:
         #     joint_transition_map[f"{agent_id}_obs"] = obs[agent_id]
@@ -81,15 +89,17 @@ def create_joint_transition(obs: Dict[str, Any],
         #     ma_done = done['__all__'].astype(jnp.float32)
         else:
             joint_transition_map[f"{agent_id}_obs"] = obs[agent_id]
-            joint_transition_map[f"{agent_id}_act"] = action[agent_id].astype(jnp.float32)
+            joint_transition_map[f"{agent_id}_act"] = action[agent_id]
+            # joint_transition_map[f"{agent_id}_act"] = jnp.asarray(action[agent_id], dtype=jnp.float32)
             if next_obs is not None:
                 joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id]
-            joint_transition_map[f"{agent_id}_rew"] = reward[agent_id].astype(jnp.float32)
-            joint_transition_map[f"{agent_id}_done"] = done[agent_id].astype(jnp.float32)
-            ma_done = done['__all__'].astype(jnp.float32)
+            joint_transition_map[f"{agent_id}_rew"] = reward[agent_id]
+            # joint_transition_map[f"{agent_id}_rew"] = jnp.asarray(reward[agent_id], dtype=jnp.float32)
+            joint_transition_map[f"{agent_id}_done"] = jnp.asarray(done[agent_id], dtype=jnp.float32)
+            ma_done = jnp.asarray(done['__all__'], dtype=jnp.float32)
     if ma_done is None:
         device_info = obs[agent_id].device()
-        ma_done = jax.device_put(jnp.array(False).reshape((-1, 1)), device_info).astype(jnp.float32)
+        ma_done = jax.device_put(jnp.array(0.0).reshape((-1, 1)), device_info)
     joint_transition_map["done"] = ma_done
     # print(f"debug only: rew {ma_done.shape}")
     return joint_transition_map
@@ -136,19 +146,21 @@ class JaxFbxBuffer:
                     actions: Dict[str, Any],
                     next_obs: Dict[str, Any], 
                     done: Dict[str, bool]):
+        # print("in buffer init", actions['agent_0'])
         transition_map = create_joint_transition(obs, 
                                                  reward, 
                                                  actions, 
                                                  next_obs, 
                                                  done,
                                                  batch_input=False)
-        dummy_transiton_map = generate_dummy_transition(transition_map)
-        self.buffer_state = self.buffer.init(dummy_transiton_map)
-        print_transition_shape(dummy_transiton_map)
+        # dummy_transiton_map = generate_dummy_transition(transition_map)
+        # print(transition_map['agent_0_act'])
+        self.buffer_state = self.buffer.init(transition_map)
+        # print_transition_shape(dummy_transiton_map)
     
     def add_trans(self, 
                   obs: Dict[str, Any], 
-                  reward: Dict[str, float], 
+                  reward: Dict[str, Any], 
                   actions: Dict[str, Any],  
                   next_obs: Dict[str, Any],
                   done: Dict[str, bool],
@@ -162,7 +174,7 @@ class JaxFbxBuffer:
                                                  next_obs, 
                                                  done,
                                                  batch_input)
-        # print(transition_map)
+        # print(transition_map['agent_0_act'])
         self.buffer_state = self.buffer.add(self.buffer_state, transition_map)
     
     def can_sample(self):
@@ -203,6 +215,7 @@ class JaxFbxTrajBuffer:
                     reward: Dict[str, float], 
                     actions: Dict[str, Any], 
                     done: Dict[str, bool]):
+        # print("in buffer init", actions['agent_0'])
         transition_map = create_joint_transition(obs=obs, 
                                                  reward=reward, 
                                                  action=actions, 
@@ -210,15 +223,16 @@ class JaxFbxTrajBuffer:
                                                  done=done,
                                                  batch_input=False,
                                                  traj_input=True)
-        dummy_transiton_map = generate_dummy_transition(transition_map)
-        self.buffer_state = self.buffer.init(dummy_transiton_map)
+        # dummy_transiton_map = generate_dummy_transition(transition_map)
+        self.buffer_state = self.buffer.init(transition_map)
     
     def add_trans(self, 
                   obs: Dict[str, Any], 
-                  reward: Dict[str, float], 
+                  reward: Dict[str, Any], 
                   actions: Dict[str, Any], 
                   done: Dict[str, bool],
                   batch_input: bool,):
+        # print("in buffer add", actions['agent_0'][0])
         transition_map = create_joint_transition(obs=obs, 
                                                  reward=reward, 
                                                  action=actions, 

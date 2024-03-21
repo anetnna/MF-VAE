@@ -25,7 +25,6 @@ from collections import defaultdict
 
 import sys
 src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-# print(src_dir)
 sys.path.insert(0, src_dir)
 
 from src.env import get_space_dim, EnvRolloutManager
@@ -146,9 +145,10 @@ def make_train(config, env):
         config["TOTAL_TIMESTEPS"] // config["NUM_STEPS"] // config["NUM_ENVS"]
     )
 
-    def train(rng):
+    def train(rngs):
         # INIT ENV
-        rng, _rng = jax.random.split(rng)
+        # rng, _rng = jax.random.split(rngs)
+        rng, _rng = jax.random.split(jax.random.PRNGKey(42))
         wrapped_env = EnvRolloutManager(env, batch_size=config["NUM_ENVS"])
         test_env = EnvRolloutManager(env, batch_size=config["NUM_TEST_EPISODES"])
         init_obs, env_state = wrapped_env.batch_reset(_rng)
@@ -305,9 +305,10 @@ def make_train(config, env):
             )
 
             # BUFFER UPDATE: save the collected trajectory in the buffer
+            # print("before add", traj_batch.actions['agent_0'][0])
             buffer.add_trans(traj_batch.obs, 
-                             traj_batch.actions, 
-                             traj_batch.rewards, 
+                             traj_batch.rewards,  
+                             traj_batch.actions,
                              traj_batch.dones,
                              batch_input=True)
             
@@ -315,7 +316,7 @@ def make_train(config, env):
             def q_of_action(q, u):
                 """index the q_values with action indices"""
                 q_u = jnp.take_along_axis(q, 
-                                          jnp.expand_dims(jnp.asarray(u, dtype=jnp.int32), axis=-1), 
+                                          jnp.expand_dims(u, axis=-1), 
                                           axis=-1)
                 return jnp.squeeze(q_u, axis=-1)
             
@@ -346,7 +347,7 @@ def make_train(config, env):
                 return targets
             
             def _loss_fn(params, target_agent_params, init_hs, learn_traj, agent_group_id):
-                obs_ = {a:learn_traj.obs[a] for a in env.agents} # ensure to not pass the global state (obs["__all__"]) to the network
+                obs_ = {a:learn_traj.obs[a] for a in env.agents if a.startswith(agent_group_id)} # ensure to not pass the global state (obs["__all__"]) to the network
                 # q_vals_all = {}
                 # target_q_vals_all = {}
                 _, q_vals = homogeneous_group_pass(params, 
@@ -367,6 +368,9 @@ def make_train(config, env):
                     q_vals,
                     filtered_actions
                 )
+                # if 'agent_0' in q_vals.keys():
+                #     print("filtered_actions", filtered_actions['agent_0'][0])
+                #     print('q_vals', q_vals['agent_0'])
 
                 # get the target for each agent (assumes every agent has a reward)
                 valid_actions = {k:v for k, v in wrapped_env.valid_actions.items() if k.startswith(agent_group_id)}
@@ -388,6 +392,9 @@ def make_train(config, env):
                     {agent:learn_traj.rewards[agent] for agent in env.agents if agent.startswith(agent_group_id)}, # rewards and agents could contain additional keys
                     {agent:learn_traj.dones[agent] for agent in env.agents if agent.startswith(agent_group_id)}
                 )
+                # if 'agent_0' in targets.keys():
+                #     print("chosen_action_qvals", chosen_action_qvals['agent_0'])
+                #     print("target", targets['agent_0'])
                 chosen_action_qvals = jnp.concatenate(list(chosen_action_qvals.values()))
                 targets = jnp.concatenate(list(targets.values()))
 
@@ -395,7 +402,7 @@ def make_train(config, env):
                     loss = jnp.mean(0.5*((chosen_action_qvals - jax.lax.stop_gradient(targets))**2))
                 else:
                     loss = jnp.mean((chosen_action_qvals - jax.lax.stop_gradient(targets))**2)
-
+                
                 return loss
             
             # sample a batched trajectory from the buffer and set the time step dim in first axis
@@ -405,6 +412,7 @@ def make_train(config, env):
             # trans batch into form: Transition(obs, actions, rewards, dones)
             #   with obs/actions/rewards/dones be like: {'agent_0': xxx, 'agent_1': xxx}
             batch_data_tmp = defaultdict(lambda: defaultdict(dict))
+            # print("batch output", batch['agent_0_act'][0])
             for k, v in batch.items():
                 if '_' in k:
                     group_id, agent_ind, var_type = k.split('_', 2)
@@ -415,6 +423,7 @@ def make_train(config, env):
                                     batch_data_tmp['act'],
                                     batch_data_tmp['rew'],
                                     batch_data_tmp['done'],)
+            # print("traj output",learn_traj.actions['agent_0'][0])
             loss_all = []
             for agent_group_id in agent_groups_id_count.keys():
                 init_hs = ScannedRNN.initialize_carry(
@@ -429,6 +438,7 @@ def make_train(config, env):
                                       learn_traj,
                                       agent_group_id)
                 loss_all.append(loss)
+                # print("train with grad", grads['params']['Dense_0']['bias'])
                 # apply gradients
                 train_state[agent_group_id] = train_state[agent_group_id].apply_gradients(grads=grads)
             
@@ -460,7 +470,7 @@ def make_train(config, env):
                 lambda _: test_metrics,
                 operand=None
             )
-
+            # print(loss_all)
             # update the returning metrics
             metrics = {
                 'timesteps': time_state['timesteps']*config['NUM_ENVS'],
@@ -479,7 +489,6 @@ def make_train(config, env):
                 #         for k,v in infos.items() if k!="returned_episode"
                 #     }
                 logger.add_scalar('Loss/Train', metrics['loss'])
-                # print(metrics['rewards'])
                 for k, v in metrics['rewards'].items():
                     reward_value = jax.device_get(v.mean())
                     logger.add_scalar(f'Return_{k}/Train', reward_value)
@@ -521,7 +530,6 @@ def make_train(config, env):
                                                                             obs_, 
                                                                             dones_, 
                                                                             agent_group_id)
-                    # print(test_env.valid_actions.keys())
                     valid_actions = {k:v for k, v in test_env.valid_actions.items() if k.startswith(agent_group_id)}
                     actions = jax.tree_util.tree_map(lambda q, valid_idx: jnp.argmax(q.squeeze(0)[..., valid_idx], axis=-1), q_vals, valid_actions)
                     actions_all.update(actions)
@@ -585,12 +593,12 @@ def make_train(config, env):
             test_metrics,
             _rng
         )
-        # runner_state, metrics = jax.lax.scan(
-        #     _update_step, runner_state, None, config["NUM_UPDATES"]
-        # )
-        pbar = tqdm(range(config["NUM_UPDATES"]), desc="Training episode")
-        for epoch_i in pbar:
-            runner_state, metrics = _update_step(runner_state, None)
+        runner_state, metrics = jax.lax.scan(
+            _update_step, runner_state, None, config["NUM_UPDATES"]
+        )
+        # pbar = tqdm(range(config["NUM_UPDATES"]), desc="Training episode")
+        # for epoch_i in pbar:
+        #     runner_state, metrics = _update_step(runner_state, None)
         return {'runner_state':runner_state, 'metrics':metrics}
     
     return train
@@ -622,6 +630,7 @@ if __name__ == "__main__":
     config['GAMMA'] = 0.9
     config["TEST_INTERVAL"] = 50_000
     config["TARGET_UPDATE_INTERVAL"] = 200
+    config["NUM_SEEDS"] = 2
 
     # create env
     env_name = "MPE_simple_tag_v3"
@@ -641,7 +650,9 @@ if __name__ == "__main__":
     logger = SummaryWriter(run_dir)
 
     rng = jax.random.PRNGKey(42)
-    rngs = jax.random.split(rng, 26)
+    rngs = jax.random.split(rng, config["NUM_SEEDS"])
+    # train_func = make_train(config, env)
+    # outs = train_func(rngs)
     train_vjit = jax.jit(jax.vmap(make_train(config, env)))
     outs = jax.block_until_ready(train_vjit(rngs))
 
