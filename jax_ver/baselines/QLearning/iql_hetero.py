@@ -488,12 +488,11 @@ def make_train(config, env):
                 #         k:v[...,0][infos["returned_episode"][..., 0]].mean()
                 #         for k,v in infos.items() if k!="returned_episode"
                 #     }
-                logger.add_scalar('Loss/Train', metrics['loss'])
+                logger.add_scalar('Loss/Train', metrics['loss'], metrics['timesteps'])
                 for k, v in metrics['rewards'].items():
-                    reward_value = jax.device_get(v.mean())
-                    logger.add_scalar(f'Return_{k}/Train', reward_value)
+                    logger.add_scalar(f'Return_{k}/Train', v.mean(), metrics['timesteps'])
                 for k, v in metrics['test_metrics'].items():
-                    logger.add_scalar(f'{k}/Test', jax.device_get(v.mean()))
+                    logger.add_scalar(f'{k}/Test', v.mean(), metrics['timesteps'])
             jax.debug.callback(callback, metrics)
 
             runner_state = (
