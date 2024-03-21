@@ -660,6 +660,9 @@ if __name__ == "__main__":
         flattened_dict = flatten_dict(params, sep=',')
         save_file(flattened_dict, filename)
     model_state = outs['runner_state'][0]
-    params = jax.tree_map(lambda x: x[0], model_state.params) # save only params of the firt run
-    save_dir = os.path.join(save_path, env_name)
-
+    for k, v in model_state:
+        params = jax.tree_map(lambda x: x[0], v.params) # save only params of the firt run
+        save_dir = os.path.join(save_path, env_name)
+        os.makedirs(save_dir, exist_ok=True)
+        save_params(params, f'{save_dir}/{k}.safetensors')
+        print(f'Parameters of first batch saved in {save_dir}/{k}.safetensors')
