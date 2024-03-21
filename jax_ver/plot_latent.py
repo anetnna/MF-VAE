@@ -4,7 +4,7 @@ import numpy as np
 
 from src.jax_buffer import JaxFbxBuffer
 from src.env import get_space_dim, EnvRolloutManager
-from model import MAVAE, MAVAEAtten
+from model import MAVAE, MAVAEAtten, MAVAEAtten_wo_ind
 from jaxmarl import make
 from trainer import create_dataset, train_step, test_step
 from tqdm import tqdm
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     using_atten = True
     ## parameters
     if using_atten:
-        model_path = "/home/huaze/enze/jax-mf-vae/jax_ver/model_save/vae/model_batch_state_right_atten.pkl"
+        model_path = "/home/huaze/enze/jax-mf-vae/jax_ver/model_save/vae/model_batch_state_right_atten_wo_ind.pkl"
     else:
         model_path = "/home/huaze/enze/jax-mf-vae/jax_ver/model_save/vae/model_batch_state.pkl"
     jax_params = load_jax_params(model_path)
@@ -136,6 +136,12 @@ if __name__ == "__main__":
     if using_atten:
         model = MAVAEAtten(idx_features=IDX_FEATURES, 
                     obs_features=OBS_FEATURES, 
+                    action_features=ACT_FEATURES, 
+                    descrete_act=DESCRETE_ACT, 
+                    agents=agents_id, 
+                    obs_dim=obs_dim_all, 
+                    action_dim=act_dim_all)
+        model = MAVAEAtten_wo_ind(obs_features=OBS_FEATURES, 
                     action_features=ACT_FEATURES, 
                     descrete_act=DESCRETE_ACT, 
                     agents=agents_id, 
@@ -168,10 +174,10 @@ if __name__ == "__main__":
     colors = plt.cm.tab20(np.linspace(0, 1, 20))
 
     if using_atten:
-        plot_variable(output_mu, 'Mu', 'atten_mu')
-        plot_variable(output_logvar, 'Log_var', 'atten_log_var')
-        plot_variable(output_mu_atten, 'Mu Atten', 'atten_mu_atten')
-        plot_variable(output_logvar_atten, 'Log_var Atten', 'atten_log_var_atten')
+        plot_variable(output_mu, 'Mu', 'atten_mu_wo_ind')
+        plot_variable(output_logvar, 'Log_var', 'atten_log_var_wo_ind')
+        plot_variable(output_mu_atten, 'Mu Atten', 'atten_mu_atten_wo_ind')
+        plot_variable(output_logvar_atten, 'Log_var Atten', 'atten_log_var_atten_wo_ind')
     else:
         plot_variable(output_mu, 'Mu', 'mu')
         plot_variable(output_logvar, 'Log_var', 'log_var')

@@ -351,3 +351,114 @@ class MAVAEAtten(nn.Module):
 
         return mu_all, log_var_all, mu_atten_all, logvar_atten_all
 
+
+class MAVAEAtten_wo_ind(nn.Module):
+    obs_features: int
+    action_features: int
+    descrete_act: bool
+    agents: list
+    obs_dim: dict
+    action_dim: dict
+
+    def setup(self):
+        encoders = {}
+        action_encoders = {}
+        for agent_id in self.agents:
+            encoders[agent_id] = Encoder(
+                self.obs_dim[agent_id], 
+                2*self.obs_features
+            )
+            if self.descrete_act:
+                action_encoders[agent_id] = Embedding(
+                    num_embeddings=self.action_dim[agent_id], 
+                    embedding_dim=self.action_features
+                )
+            else:
+                action_encoders[agent_id] = ActionEncoder(self.action_dim[agent_id], self.action_features)
+        self.encoders = encoders
+        self.action_encoders = action_encoders
+
+        decoders = {}
+        reward_decoders = {}
+        for agent_id in self.agents:
+            decoders[agent_id] = Decoder(
+                self.obs_features + self.action_features,
+                self.obs_dim[agent_id]
+            )
+            reward_decoders[agent_id] = Decoder(
+                self.obs_features + self.action_features,
+                1
+            )
+        self.decoders = decoders
+        self.reward_decoders = reward_decoders
+
+    @nn.compact
+    def __call__(self, 
+                 idx_state,
+                 actions, 
+                 rng_key):
+        z_all = []
+        mu_all = []
+        log_var_all = []
+        actions_emb = []
+
+        agent_ids = idx_state.keys()
+        for agent_id in agent_ids:
+            obs = idx_state[agent_id][:, 1:]
+            latent_rep = self.encoders[agent_id](obs)
+
+            rng_key, sub_key = random.split(rng_key)
+
+            if self.descrete_act:
+                action_emb = self.action_encoders[agent_id](actions[agent_id].astype(jnp.int32))
+            else:
+                action_emb = self.action_encoders[agent_id](actions[agent_id])
+            
+            mu = latent_rep[:, :self.obs_features]
+            log_var = latent_rep[:, self.obs_features:]
+            
+            actions_emb.append(action_emb)
+            mu_all.append(mu)
+            log_var_all.append(log_var)
+
+        mu_atten_all = attention_func(mu_all)
+        logvar_atten_all = attention_func(log_var_all)
+
+        recon_state = {}
+        recon_reward = {}
+        for i, agent_id in enumerate(agent_ids):
+            z = reparameterize(mu_atten_all[i], logvar_atten_all[i], sub_key)
+            latent_rep = jnp.concatenate([z, actions_emb[i]], axis=1)
+            recon_state[agent_id] = self.decoders[agent_id](latent_rep)
+            recon_reward[agent_id] = self.reward_decoders[agent_id](latent_rep)
+        
+        mu_all = jnp.concatenate(mu_all, axis=1)
+        log_var_all = jnp.concatenate(log_var_all, axis=1)
+        return recon_state, recon_reward, mu_all, log_var_all
+
+    def output_latent(self, 
+                      idx_state, 
+                      rng_key):
+        mu_all = []
+        log_var_all = []
+        for agent_id in idx_state.keys():
+            obs = idx_state[agent_id][:, 1:]
+            latent_rep = self.encoders[agent_id](obs)
+
+            rng_key, sub_key = random.split(rng_key)
+
+            mu = latent_rep[:, :self.obs_features]
+            log_var = latent_rep[:, self.obs_features:]
+            mu_all.append(mu)
+            log_var_all.append(log_var)
+        
+        mu_atten_all = attention_func(mu_all)
+        logvar_atten_all = attention_func(log_var_all)
+
+        mu_all = jnp.concatenate(mu_all, axis=0)
+        log_var_all = jnp.concatenate(log_var_all, axis=0)
+        mu_atten_all = jnp.concatenate(mu_atten_all, axis=0)
+        logvar_atten_all = jnp.concatenate(logvar_atten_all, axis=0)
+
+        return mu_all, log_var_all, mu_atten_all, logvar_atten_all
+

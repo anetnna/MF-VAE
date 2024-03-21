@@ -3,7 +3,7 @@ import jax.numpy as jnp
 
 from src.jax_buffer import JaxFbxBuffer
 from src.env import get_space_dim, EnvRolloutManager
-from model import MAVAE, MAVAEAtten
+from model import MAVAE, MAVAEAtten, MAVAEAtten_wo_ind
 from jaxmarl import make
 from trainer import create_dataset, train_step, test_step
 from tqdm import tqdm
@@ -170,7 +170,14 @@ if __name__ == "__main__":
                         obs_dim=obs_dim_all, 
                         action_dim=act_dim_all)
     else:
-        model = MAVAEAtten(idx_features=IDX_FEATURES, 
+        # model = MAVAEAtten(idx_features=IDX_FEATURES, 
+        #                 obs_features=OBS_FEATURES, 
+        #                 action_features=ACT_FEATURES, 
+        #                 descrete_act=DESCRETE_ACT, 
+        #                 agents=agents_id, 
+        #                 obs_dim=obs_dim_all, 
+        #                 action_dim=act_dim_all)
+        model = MAVAEAtten_wo_ind(
                         obs_features=OBS_FEATURES, 
                         action_features=ACT_FEATURES, 
                         descrete_act=DESCRETE_ACT, 
@@ -203,7 +210,7 @@ if __name__ == "__main__":
     
     # create logger
     run_dir = Path(os.path.dirname(os.path.abspath(__file__))
-                   + "/results") / f'atten_ls_{lr}_{datetime.now().strftime("%Y-%m-%d-%H:%M:%S")}'
+                   + "/results") / f'atten_wo_ind_ls_{lr}_{datetime.now().strftime("%Y-%m-%d-%H:%M:%S")}'
     logger = SummaryWriter(run_dir)
 
     ## main loop
@@ -242,7 +249,7 @@ if __name__ == "__main__":
     
     end_time = time.time()
 
-    with open('./model_save/vae/model_batch_state_right_atten.pkl', 'wb') as f:
+    with open('./model_save/vae/model_batch_state_right_atten_wo_ind.pkl', 'wb') as f:
         pickle.dump(train_state.params, f)
     
     # print(f"obs shape: {observations['adversary_0'].shape}")

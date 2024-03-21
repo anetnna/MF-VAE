@@ -60,6 +60,7 @@ def create_joint_transition(obs: Dict[str, Any],
             if next_obs is not None:
                 joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id].reshape((-1, 1))
             joint_transition_map[f"{agent_id}_rew"] = reward[agent_id].reshape((-1, 1)).astype(jnp.float32)
+            joint_transition_map[f"{agent_id}_done"] = done[agent_id].reshape((-1, 1)).astype(jnp.float32)
             if done[agent_id]:
                 device_info = obs[agent_id].device()
                 ma_done = jax.device_put(jnp.array(True).reshape((-1, 1)), device_info).astype(jnp.float32)
@@ -69,20 +70,22 @@ def create_joint_transition(obs: Dict[str, Any],
             if next_obs is not None:
                 joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id][:, :, jnp.newaxis]
             joint_transition_map[f"{agent_id}_rew"] = reward[agent_id][:, jnp.newaxis, jnp.newaxis].astype(jnp.float32)
+            joint_transition_map[f"{agent_id}_done"] = done[agent_id][:, jnp.newaxis, jnp.newaxis].astype(jnp.float32)
             ma_done = done['__all__'][:, jnp.newaxis, jnp.newaxis].astype(jnp.float32)
-        elif batch_input and traj_input:
-            joint_transition_map[f"{agent_id}_obs"] = obs[agent_id]
-            joint_transition_map[f"{agent_id}_act"] = action[agent_id].astype(jnp.float32)
-            if next_obs is not None:
-                joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id]
-            joint_transition_map[f"{agent_id}_rew"] = reward[agent_id].astype(jnp.float32)
-            ma_done = done['__all__'].astype(jnp.float32)
+        # elif batch_input and traj_input:
+        #     joint_transition_map[f"{agent_id}_obs"] = obs[agent_id]
+        #     joint_transition_map[f"{agent_id}_act"] = action[agent_id].astype(jnp.float32)
+        #     if next_obs is not None:
+        #         joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id]
+        #     joint_transition_map[f"{agent_id}_rew"] = reward[agent_id].astype(jnp.float32)
+        #     ma_done = done['__all__'].astype(jnp.float32)
         else:
             joint_transition_map[f"{agent_id}_obs"] = obs[agent_id]
             joint_transition_map[f"{agent_id}_act"] = action[agent_id].astype(jnp.float32)
             if next_obs is not None:
                 joint_transition_map[f"{agent_id}_next_obs"] = next_obs[agent_id]
             joint_transition_map[f"{agent_id}_rew"] = reward[agent_id].astype(jnp.float32)
+            joint_transition_map[f"{agent_id}_done"] = done[agent_id].astype(jnp.float32)
             ma_done = done['__all__'].astype(jnp.float32)
     if ma_done is None:
         device_info = obs[agent_id].device()
@@ -236,18 +239,26 @@ class JaxFbxTrajBuffer:
         return self.buffer.can_sample(self.buffer_state)
     
     def sample(self, rng_key):
-        if self.buffer_state is None:
-            print(f"buffer not init; please call init_buffer() first")
-            return
-        if not self.can_sample():
-            print(f"can not sample now")
-            return
         batch = self.buffer.sample(self.buffer_state, rng_key).experience
         batch = jax.tree_map(
-                lambda x: jnp.swapaxes(x[:, 0], 0, 1), # remove the dummy sequence dim (1) and swap batch and temporal dims
-                batch
-            ) # (max_time_steps, batch_size, ...)
+            lambda x: jnp.swapaxes(x[:, 0], 0, 1), 
+            batch
+        )
         return batch
+    
+    # def sample(self, rng_key):
+    #     if self.buffer_state is None:
+    #         print(f"buffer not init; please call init_buffer() first")
+    #         return
+    #     if not self.can_sample():
+    #         print(f"can not sample now")
+    #         return
+    #     batch = self.buffer.sample(self.buffer_state, rng_key).experience
+    #     batch = jax.tree_map(
+    #             lambda x: jnp.swapaxes(x[:, 0], 0, 1), # remove the dummy sequence dim (1) and swap batch and temporal dims
+    #             batch
+    #         ) # (max_time_steps, batch_size, ...)
+    #     return batch
 
 
 class Transition(NamedTuple):
