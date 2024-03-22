@@ -3,3 +3,7 @@
 checkpoints/
 model_save/
 results/
+baselines/QLearning/results
+*.txt
+self_env/
+JaxMARL/
