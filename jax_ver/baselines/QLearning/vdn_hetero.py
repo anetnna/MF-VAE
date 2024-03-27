@@ -399,12 +399,15 @@ def make_train(config, env):
                 target_max_qvals_sum = jnp.stack(list(target_max_qvals.values())).sum(axis=0)
 
                 # compute a single l2 loss for all the agents in one pass (parameter sharing)
-                targets = jax.tree_map(
-                    compute_target,
-                    target_max_qvals_sum,
-                    concatenated_rewards, # rewards and agents could contain additional keys
-                    learn_traj_done['done']
-                )
+                targets = compute_target(target_max_qvals_sum, 
+                                         concatenated_rewards, 
+                                         learn_traj_done['done'])
+                # targets = jax.tree_map(
+                #     compute_target,
+                #     target_max_qvals_sum,
+                #     concatenated_rewards, # rewards and agents could contain additional keys
+                #     learn_traj_done['done']
+                # )
                 # if 'agent_0' in targets.keys():
                 #     print("chosen_action_qvals", chosen_action_qvals['agent_0'])
                 #     print("target", targets['agent_0'])
@@ -659,7 +662,7 @@ if __name__ == "__main__":
     
     # create logger
     run_dir = Path(os.path.dirname(os.path.abspath(__file__))
-                   + "/results") / f'iql_{datetime.now().strftime("%Y-%m-%d-%H:%M:%S")}'
+                   + "/results") / f'vdn_{datetime.now().strftime("%Y-%m-%d-%H:%M:%S")}'
     logger = SummaryWriter(run_dir)
 
     rng = jax.random.PRNGKey(42)
@@ -674,9 +677,9 @@ if __name__ == "__main__":
         flattened_dict = flatten_dict(params, sep=',')
         save_file(flattened_dict, filename)
     model_state = outs['runner_state'][0]
-    for k, v in model_state:
+    for k, v in model_state.items():
         params = jax.tree_map(lambda x: x[0], v.params) # save only params of the firt run
-        save_dir = os.path.join(save_path, env_name)
+        save_dir = os.path.join(save_path, env_name, 'vdn')
         os.makedirs(save_dir, exist_ok=True)
         save_params(params, f'{save_dir}/{k}.safetensors')
         print(f'Parameters of first batch saved in {save_dir}/{k}.safetensors')

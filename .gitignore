@@ -3,3 +3,6 @@
 checkpoints/
 model_save/
 results/
+JaxMARL/
+self_env/
+*.txt
