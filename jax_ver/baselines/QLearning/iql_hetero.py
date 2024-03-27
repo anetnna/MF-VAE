@@ -584,7 +584,7 @@ if __name__ == "__main__":
     model_state = outs['runner_state'][0]
     for k, v in model_state.items():
         params = jax.tree_map(lambda x: x[0], v.params) # save only params of the firt run
-        save_dir = os.path.join(save_path, env_name)
+        save_dir = os.path.join(save_path, env_name, 'iql')
         os.makedirs(save_dir, exist_ok=True)
         save_params(params, f'{save_dir}/{k}.safetensors')
         print(f'Parameters of first batch saved in {save_dir}/{k}.safetensors')

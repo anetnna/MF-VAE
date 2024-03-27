@@ -408,7 +408,7 @@ def make_train(config, env):
                     targets = rewards[:-1] + config["GAMMA"]*(1-dones[:-1])*target_max_qvals_mix
                 return targets
             
-            def _loss_fn(params, target_agent_params, init_hs, learn_traj,learn_traj_done,agent_group_id):
+            def _loss_fn(params, target_agent_params, init_hs, learn_traj, learn_traj_done, agent_group_id):
                 obs_ = {a:learn_traj.obs[a] for a in env.agents if a.startswith(agent_group_id)} # ensure to not pass the global state (obs["__all__"]) to the network
                 # q_vals_all = {}
                 # target_q_vals_all = {}
@@ -472,8 +472,8 @@ def make_train(config, env):
                     jnp.stack(list(target_max_qvals.values())),
                     concatenated_obs[1:] # avoid first timestep
                 )
-                print(f"debug only: target_max_qvals: {target_max_qvals}")
-                print(f"debug only: target_max_qvals_mix: {target_max_qvals_mix}")
+                # print(f"debug only: target_max_qvals: {target_max_qvals}")
+                # print(f"debug only: target_max_qvals_mix: {target_max_qvals_mix}")
                 # compute a single l2 loss for all the agents in one pass (parameter sharing)
 
                 targets = jax.tree_map(
@@ -514,9 +514,9 @@ def make_train(config, env):
                                     batch_data_tmp['act'],
                                     batch_data_tmp['rew'],
                                     batch_data_tmp['done'],)
-            learn_traj_done = {}
+            # learn_traj_done = {}
             learn_traj_done ={'done': batch['done']}
-            print(f" learn_traj_done", learn_traj_done)
+            # print(f" learn_traj_done", learn_traj_done)
             # print("traj output",learn_traj.actions['agent_0'][0])
             loss_all = []
             for agent_group_id in agent_groups_id_count.keys():
@@ -715,17 +715,17 @@ if __name__ == "__main__":
     config['AGENT_INIT_SCALE'] = 2.
     config["NUM_UPDATES"] = 1_00 # 随便写的值
     config["LR"] = 0.005
-    config['LR_LINEAR_DECAY'] = False
+    config['LR_LINEAR_DECAY'] = True
     config["MAX_GRAD_NORM"] = 25
     config['EPS_ADAM'] = 0.001
     config["EPSILON_START"] = 1.0
     config["EPSILON_FINISH"] = 0.05
     config["EPSILON_ANNEAL_TIME"] = 100_000
-    config['TD_LAMBDA_LOSS'] = False
+    config['TD_LAMBDA_LOSS'] = True
     config['TD_LAMBDA'] = 0.6
     config['GAMMA'] = 0.9
     config["TEST_INTERVAL"] = 50_000
-    config["TARGET_UPDATE_INTERVAL"] = 200
+    config["TARGET_UPDATE_INTERVAL"] = 32
     config["NUM_SEEDS"] = 2
     config['MIXER_EMBEDDING_DIM'] = 32
     config["MIXER_HYPERNET_HIDDEN_DIM"] = 64
@@ -744,7 +744,7 @@ if __name__ == "__main__":
     
     # create logger
     run_dir = Path(os.path.dirname(os.path.abspath(__file__))
-                   + "/results") / f'iql_{datetime.now().strftime("%Y-%m-%d-%H:%M:%S")}'
+                   + "/results") / f'qmix_{datetime.now().strftime("%Y-%m-%d-%H:%M:%S")}'
     logger = SummaryWriter(run_dir)
 
     rng = jax.random.PRNGKey(42)
@@ -759,9 +759,9 @@ if __name__ == "__main__":
         flattened_dict = flatten_dict(params, sep=',')
         save_file(flattened_dict, filename)
     model_state = outs['runner_state'][0]
-    for k, v in model_state:
+    for k, v in model_state.items():
         params = jax.tree_map(lambda x: x[0], v.params) # save only params of the firt run
-        save_dir = os.path.join(save_path, env_name)
+        save_dir = os.path.join(save_path, env_name, 'qmix')
         os.makedirs(save_dir, exist_ok=True)
         save_params(params, f'{save_dir}/{k}.safetensors')
         print(f'Parameters of first batch saved in {save_dir}/{k}.safetensors')
